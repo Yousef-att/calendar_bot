@@ -1,0 +1,13 @@
+# App name must be globally unique on Fly.io -- `fly launch` / `fly apps create`
+# will ask you to pick one and can rewrite this line for you.
+app = "your-calendar-bot"
+primary_region = "iad"
+
+[build]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# No [[services]] / [http_service] block: this app is a background worker
+# (Telegram long-polling), not an HTTP server, so it doesn't need one.

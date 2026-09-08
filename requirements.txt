@@ -1,0 +1,8 @@
+python-telegram-bot>=21.0
+openai>=1.40
+requests>=2.31
+python-dotenv>=1.0
+google-auth>=2.29
+google-auth-oauthlib>=1.2
+google-api-python-client>=2.130
+tzdata>=2024.1

@@ -1,0 +1,10 @@
+# --- Secrets: never commit these ---
+.env
+credentials.json
+token.json
+
+# --- Generated / local junk ---
+__pycache__/
+*.pyc
+.venv/
+*.log

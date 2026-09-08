@@ -1,0 +1,37 @@
+name: Run calendar bot
+
+on:
+  schedule:
+    # Every 6 hours. The job below self-limits to 355 minutes (< 360), so by
+    # the time the next scheduled run fires, the previous one has always
+    # already exited -- avoiding two long-polling instances running at once
+    # (Telegram only allows one active getUpdates connection per bot token).
+    - cron: "7 */6 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: calendar-bot-poller
+  cancel-in-progress: true
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - run: python bot.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL }}
+          BOSS_CALENDAR_ID: ${{ secrets.BOSS_CALENDAR_ID }}
+          TIMEZONE: ${{ secrets.TIMEZONE }}
+          DEFAULT_DURATION_MINUTES: ${{ secrets.DEFAULT_DURATION_MINUTES }}
+          GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
