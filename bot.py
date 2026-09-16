@@ -48,18 +48,24 @@ def format_preview(event):
     return "\n".join(lines)
 
 
+def _message_text(msg):
+    """Plain-text messages carry their text in .text; photos/documents/etc.
+    with a caption carry it in .caption instead -- check both."""
+    return msg.text or msg.caption
+
+
 async def handle_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     bot_username = context.bot_data["bot_username"]
 
     if not message or not message.text or f"@{bot_username}".lower() not in message.text.lower():
         return
-    if not message.reply_to_message or not message.reply_to_message.text:
+    original_text = message.reply_to_message and _message_text(message.reply_to_message)
+    if not original_text:
         await message.reply_text("Tag me on a reply to the message that has the meeting details.")
         return
 
     settings = context.bot_data["settings"]
-    original_text = message.reply_to_message.text
     reference_dt = message.date.astimezone(settings.timezone)
 
     try:
