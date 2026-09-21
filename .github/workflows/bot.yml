@@ -2,16 +2,28 @@ name: Run calendar bot
 
 on:
   schedule:
-    # Every 6 hours. The job below self-limits to 355 minutes (< 360), so by
-    # the time the next scheduled run fires, the previous one has always
-    # already exited -- avoiding two long-polling instances running at once
-    # (Telegram only allows one active getUpdates connection per bot token).
-    - cron: "7 */6 * * *"
-  workflow_dispatch: {}
+    # Safety net only. The running job normally queues its own successor (see
+    # "Run bot" below); a cron-created run just waits as "pending" in the
+    # concurrency group and takes over the moment the current run ends.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      handoff_seconds:
+        description: "Seconds until this run queues its successor run"
+        default: "20400"
 
+permissions:
+  contents: read
+  actions: write
+
+# One long-polling instance at a time (Telegram allows a single getUpdates
+# consumer per bot token). cancel-in-progress must stay false: a new run has to
+# WAIT for the current one to end, not kill it -- that's what makes the handoff
+# independent of GitHub's (hours-late) cron scheduling.
+# To hot-swap after pushing code: `gh run cancel <running run id>`.
 concurrency:
   group: calendar-bot-poller
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   run-bot:
@@ -23,11 +35,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - run: pip install -r requirements.txt
 
-      - run: python bot.py
+      - name: Run bot
+        run: |
+          # Queue the successor well before the timeout so it is already
+          # pending when this run ends -> ~1 minute of downtime per handoff.
+          (
+            sleep "$HANDOFF_SECONDS"
+            for i in 1 2 3 4 5; do
+              gh workflow run bot.yml --repo "$GITHUB_REPOSITORY" && break
+              sleep 30
+            done
+          ) &
+          while true; do
+            python bot.py || true
+            echo "bot.py exited, restarting in 5s"
+            sleep 5
+          done
         env:
+          HANDOFF_SECONDS: ${{ inputs.handoff_seconds || '20400' }}
+          GH_TOKEN: ${{ github.token }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL }}
