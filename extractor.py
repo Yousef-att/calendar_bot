@@ -100,9 +100,14 @@ other.
 
 
 def _extract_json(raw_text):
+    if not raw_text:
+        raise ValueError(
+            "Model returned no text (likely ran out of output tokens on internal "
+            "reasoning before writing the answer -- try raising max_tokens)."
+        )
     match = re.search(r"\{.*\}", raw_text, re.DOTALL)
     if not match:
-        raise ValueError(f"No JSON found in model output: {raw_text[:200]}")
+        raise ValueError(f"No complete JSON found in model output (likely truncated): {raw_text[:200]}")
     return json.loads(match.group(0))
 
 
@@ -120,15 +125,21 @@ def extract_event(message_text, reference_dt, default_duration_minutes, api_key,
 
     response = client.chat.completions.create(
         model=model,
-        max_tokens=500,
+        # Generous headroom: some models spend a variable, sometimes large,
+        # chunk of this on internal reasoning before writing the actual JSON
+        # answer -- too tight a budget silently truncates or empties the
+        # answer (this bit us once with max_tokens=500 on a long message).
+        max_tokens=2000,
         extra_headers={"X-Title": "Calendar Bot"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
     )
-    raw_text = response.choices[0].message.content
-    event = _extract_json(raw_text)
+    choice = response.choices[0]
+    if choice.finish_reason == "length":
+        raise RuntimeError("Model output was truncated (hit max_tokens) before finishing the answer.")
+    event = _extract_json(choice.message.content)
     if event.get("found") and not event.get("duration_minutes"):
         event["duration_minutes"] = default_duration_minutes
     return event
