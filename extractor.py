@@ -56,37 +56,48 @@ def resolve_model(model_setting, api_key):
 
 
 SYSTEM_PROMPT = """You read a single message from a Telegram chat between two \
-colleagues discussing scheduling, and extract the meeting it describes so it can \
-be put straight onto a calendar.
+colleagues discussing scheduling, and extract every distinct meeting/commitment it \
+describes so each can be put straight onto a calendar.
+
+A message can describe more than one meeting -- e.g. a recurring schedule spelled \
+out as several back-to-back time blocks ("11:00-12:30 X, 12:30-13:30 Y, 13:30-14:00 \
+Z"), or simply several unrelated meetings mentioned together. Extract EACH one as \
+its own entry -- do not collapse them into one, and do not silently pick just one.
 
 You are given the message text and a reference date/time (the moment the request \
 to extract this event was made, already in the correct local timezone) -- use it \
-to resolve relative phrases like "tomorrow", "next Tuesday", or "in the afternoon".
+to resolve relative phrases like "tomorrow", "next Tuesday", or "in the afternoon". \
+If a single reference date/day is given for the whole message (e.g. "for next \
+Tuesday"), apply it to every meeting extracted from that message unless a specific \
+entry clearly overrides it with its own date.
 
 Respond with ONLY valid JSON, no prose before or after, matching exactly this schema:
 
 {
-  "found": true,
-  "date": "YYYY-MM-DD",
-  "time": "HH:MM",
-  "duration_minutes": 120,
-  "topic_en": "short description of what the meeting is about, in English",
-  "topic_ru": "the same, in Russian",
-  "with_whom_en": "who it's with, in English, or null if not mentioned",
-  "with_whom_ru": "the same, in Russian, or null if not mentioned",
-  "location_en": "where it is, in English, or null if not mentioned",
-  "location_ru": "the same, in Russian, or null if not mentioned"
+  "events": [
+    {
+      "date": "YYYY-MM-DD",
+      "time": "HH:MM",
+      "duration_minutes": 120,
+      "topic_en": "short description of what the meeting is about, in English",
+      "topic_ru": "the same, in Russian",
+      "with_whom_en": "who it's with, in English, or null if not mentioned",
+      "with_whom_ru": "the same, in Russian, or null if not mentioned",
+      "location_en": "where it is, in English, or null if not mentioned",
+      "location_ru": "the same, in Russian, or null if not mentioned"
+    }
+  ]
 }
 
 Rules:
-- Set "found": false (and every other field null) if the message does not clearly \
-describe a specific meeting with at least a date and a time -- do not guess or \
-invent a date/time that isn't actually implied by the text.
+- "events" is an empty list if the message does not clearly describe any specific \
+meeting with at least a date and a time -- do not guess or invent a date/time that \
+isn't actually implied by the text.
 - "time" is 24-hour "HH:MM" in the reference timezone. If only a vague part of day \
 is given (e.g. "morning"), pick a reasonable specific time (e.g. "09:00").
 - "duration_minutes" is an integer. Only depart from the given default when the \
-message actually states or clearly implies a different length.
-- Keep each "topic_*" short (under ~12 words) and concrete -- what the meeting is \
+message actually states or clearly implies a different length for that entry.
+- Keep each "topic_*" short (under ~12 words) and concrete -- what that meeting is \
 about, not a restatement of the whole message.
 - The source message may already be in English, Russian, or a mix -- always fill in \
 BOTH the "_en" and "_ru" version of each field (translating whichever language \
@@ -111,9 +122,10 @@ def _extract_json(raw_text):
     return json.loads(match.group(0))
 
 
-def extract_event(message_text, reference_dt, default_duration_minutes, api_key, model_setting):
+def extract_events(message_text, reference_dt, default_duration_minutes, api_key, model_setting):
     """reference_dt is a timezone-aware datetime giving "now" for resolving
-    relative dates/times, already converted to the target local timezone."""
+    relative dates/times, already converted to the target local timezone.
+    Returns a list of event dicts (possibly empty, possibly more than one)."""
     model = resolve_model(model_setting, api_key)
 
     client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key)
@@ -129,7 +141,8 @@ def extract_event(message_text, reference_dt, default_duration_minutes, api_key,
         # chunk of this on internal reasoning before writing the actual JSON
         # answer -- too tight a budget silently truncates or empties the
         # answer (this bit us once with max_tokens=500 on a long message).
-        max_tokens=2000,
+        # Multi-event messages need even more room than a single event did.
+        max_tokens=3000,
         extra_headers={"X-Title": "Calendar Bot"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -139,7 +152,9 @@ def extract_event(message_text, reference_dt, default_duration_minutes, api_key,
     choice = response.choices[0]
     if choice.finish_reason == "length":
         raise RuntimeError("Model output was truncated (hit max_tokens) before finishing the answer.")
-    event = _extract_json(choice.message.content)
-    if event.get("found") and not event.get("duration_minutes"):
-        event["duration_minutes"] = default_duration_minutes
-    return event
+    parsed = _extract_json(choice.message.content)
+    events = parsed.get("events") or []
+    for event in events:
+        if not event.get("duration_minutes"):
+            event["duration_minutes"] = default_duration_minutes
+    return events

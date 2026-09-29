@@ -2,9 +2,10 @@
 Entrypoint. Long-polls Telegram for messages in the group.
 
 Flow: reply to a message and tag the bot -> it reads the replied-to message,
-extracts a meeting (date/time/topic/who/where) via extractor.py, and posts a
-preview with a "Set" button. Tapping it inserts the event on the boss's
-Google Calendar via calendar_client.py.
+extracts every meeting it describes (date/time/topic/who/where) via
+extractor.py, and posts one preview per meeting, each with its own "Set"
+button. Tapping one inserts that event on the boss's Google Calendar via
+calendar_client.py.
 """
 
 import logging
@@ -16,7 +17,7 @@ from telegram.ext import Application, CallbackQueryHandler, ContextTypes, Messag
 
 from calendar_client import build_service, insert_event
 from config import load_settings
-from extractor import extract_event
+from extractor import extract_events
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -69,7 +70,7 @@ async def handle_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reference_dt = message.date.astimezone(settings.timezone)
 
     try:
-        event = extract_event(
+        events = extract_events(
             original_text,
             reference_dt,
             settings.default_duration_minutes,
@@ -81,15 +82,16 @@ async def handle_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("Sorry, I couldn't process that message -- something went wrong.")
         return
 
-    if not event.get("found"):
+    if not events:
         await message.reply_text("I couldn't find a clear meeting (date & time) in that message.")
         return
 
-    event_id = uuid.uuid4().hex[:8]
-    PENDING_EVENTS[event_id] = event
+    for event in events:
+        event_id = uuid.uuid4().hex[:8]
+        PENDING_EVENTS[event_id] = event
 
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Set", callback_data=f"set:{event_id}")]])
-    await message.reply_text(format_preview(event), parse_mode="Markdown", reply_markup=keyboard)
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Set", callback_data=f"set:{event_id}")]])
+        await message.reply_text(format_preview(event), parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def handle_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
