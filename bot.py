@@ -1,9 +1,10 @@
 """
 Entrypoint. Long-polls Telegram for messages in the group.
 
-Flow: reply to a message and tag the bot -> it reads the replied-to message,
-extracts every meeting it describes (date/time/topic/who/where) via
-extractor.py, and posts one preview per meeting, each with its own "Set"
+Flow: reply to a message and tag the bot -> it reads the replied-to message
+(its text, and/or an attached image such as an event poster), extracts every
+meeting it describes (date/time/topic/who/where) via extractor.py, and posts
+one preview per meeting, each with its own "Set"
 button. Tapping one inserts that event on the boss's Google Calendar via
 calendar_client.py.
 """
@@ -11,6 +12,7 @@ calendar_client.py.
 import logging
 import sys
 import uuid
+from collections import namedtuple
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
@@ -28,6 +30,14 @@ logger = logging.getLogger("calendar_bot")
 # uuid -> extracted event dict, awaiting a tap on "Set". In-memory only: a
 # pending preview is lost if the bot restarts before it's tapped.
 PENDING_EVENTS = {}
+
+# Image formats Claude can read, and a size cap with margin under its 5 MB
+# per-image limit. Telegram's compressed "photo" uploads are JPEGs well under
+# this; only images sent as an uncompressed file can miss either check.
+SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+MAX_IMAGE_BYTES = 3_500_000
+
+ImageRef = namedtuple("ImageRef", "file_id mime_type file_size")
 
 
 def _bilingual(event, field, missing="Not specified / Не указано"):
@@ -55,27 +65,60 @@ def _message_text(msg):
     return msg.text or msg.caption
 
 
+def _message_image(msg):
+    """Returns an ImageRef for the image in msg, or None. Images arrive either
+    as a compressed photo (.photo, a list of sizes -- the last is the largest)
+    or as an uncompressed file (.document with an image MIME type)."""
+    if msg.photo:
+        largest = msg.photo[-1]
+        return ImageRef(largest.file_id, "image/jpeg", largest.file_size)
+    doc = msg.document
+    if doc and (doc.mime_type or "").startswith("image/"):
+        return ImageRef(doc.file_id, doc.mime_type, doc.file_size)
+    return None
+
+
+def _image_is_readable(image):
+    return image.mime_type in SUPPORTED_IMAGE_TYPES and (image.file_size or 0) <= MAX_IMAGE_BYTES
+
+
 async def handle_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     bot_username = context.bot_data["bot_username"]
 
     if not message or not message.text or f"@{bot_username}".lower() not in message.text.lower():
         return
-    original_text = message.reply_to_message and _message_text(message.reply_to_message)
-    if not original_text:
+    original = message.reply_to_message
+    original_text = original and _message_text(original)
+    image = original and _message_image(original)
+    if not original_text and not image:
         await message.reply_text("Tag me on a reply to the message that has the meeting details.")
         return
+    if image and not _image_is_readable(image):
+        if not original_text:
+            await message.reply_text(
+                "I can't read that image file -- send it as a photo (not as a file) and tag me again."
+            )
+            return
+        logger.info("Skipping unreadable image (%s, %s bytes); using text only", image.mime_type, image.file_size)
+        image = None
 
     settings = context.bot_data["settings"]
     reference_dt = message.date.astimezone(settings.timezone)
 
     try:
+        image_bytes = None
+        if image:
+            tg_file = await context.bot.get_file(image.file_id)
+            image_bytes = bytes(await tg_file.download_as_bytearray())
         events = extract_events(
             original_text,
             reference_dt,
             settings.default_duration_minutes,
             settings.openrouter_api_key,
             settings.openrouter_model,
+            image_bytes=image_bytes,
+            image_mime=image.mime_type if image else None,
         )
     except Exception:
         logger.exception("Extraction failed")

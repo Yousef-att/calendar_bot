@@ -1,5 +1,7 @@
-"""Pulls structured meeting details out of a raw chat message via an LLM."""
+"""Pulls structured meeting details out of a chat message (text and/or an
+attached image such as an event poster) via an LLM."""
 
+import base64
 import json
 import re
 import time
@@ -107,6 +109,25 @@ rather than translating its meaning) rather than leaving one version untouched.
 - For "with_whom_en"/"with_whom_ru" and "location_en"/"location_ru": either both \
 languages are null (not mentioned), or both are filled -- never one without the \
 other.
+
+Images:
+The message may come with an image -- usually an event poster, flyer, or \
+invitation, sometimes a screenshot. Treat the text printed in the image as part \
+of the message and extract from it the same way. When there is also message text \
+(a caption), read both together; if they conflict, the caption wins, since it is \
+usually a correction or added context ("moved to Friday").
+- Posters are designed, not written: the date, time, and venue are often \
+scattered, stylized, or in small print. Read the whole image before deciding.
+- Ignore sponsor/partner logos, slogans, social handles, QR codes, and ticket \
+prices -- they are not the meeting details.
+- "topic_*" is the event's name or what it is about (e.g. the headline), not the \
+organizer's tagline.
+- "with_whom_*" is the organizer or host if one is clearly named; otherwise null.
+- If the image shows a date without a year, pick the next occurrence of that \
+date on or after the reference date.
+- If the image gives both a start and an end time, set "duration_minutes" from them.
+- If an image has no readable event details (e.g. a photo of people, a meme), \
+return an empty "events" list.
 """
 
 
@@ -122,17 +143,41 @@ def _extract_json(raw_text):
     return json.loads(match.group(0))
 
 
-def extract_events(message_text, reference_dt, default_duration_minutes, api_key, model_setting):
+def _build_user_content(message_text, reference_dt, default_duration_minutes, image_bytes, image_mime):
+    header = (
+        f'Reference date/time: {reference_dt.strftime("%A, %Y-%m-%d %H:%M")} '
+        f"(default meeting length if unstated: {default_duration_minutes} minutes)\n\n"
+    )
+    if not image_bytes:
+        return header + f"Message:\n{message_text}"
+
+    caption = message_text or "(no text -- the details are in the attached image)"
+    data_url = f"data:{image_mime};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+    return [
+        {"type": "text", "text": header + f"Message text:\n{caption}\n\nAttached image:"},
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ]
+
+
+def extract_events(
+    message_text,
+    reference_dt,
+    default_duration_minutes,
+    api_key,
+    model_setting,
+    image_bytes=None,
+    image_mime="image/jpeg",
+):
     """reference_dt is a timezone-aware datetime giving "now" for resolving
     relative dates/times, already converted to the target local timezone.
-    Returns a list of event dicts (possibly empty, possibly more than one)."""
+    message_text may be None when image_bytes (e.g. a poster) carries the
+    details. Returns a list of event dicts (possibly empty, possibly more
+    than one)."""
     model = resolve_model(model_setting, api_key)
 
     client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key)
-    user_content = (
-        f'Reference date/time: {reference_dt.strftime("%A, %Y-%m-%d %H:%M")} '
-        f"(default meeting length if unstated: {default_duration_minutes} minutes)\n\n"
-        f"Message:\n{message_text}"
+    user_content = _build_user_content(
+        message_text, reference_dt, default_duration_minutes, image_bytes, image_mime
     )
 
     response = client.chat.completions.create(

@@ -4,6 +4,10 @@ Tag this bot on a reply to a Telegram message about a meeting, and it will
 preview the event it extracted (date, time, topic, who, where) with a **✅
 Set** button. Tapping it creates the event on your boss's Google Calendar.
 
+The message can be plain text, or an image such as an event poster or
+invitation -- the bot reads the details printed on it. If the image also has a
+caption, both are read together and the caption wins on any conflict.
+
 ## 1. Create the Telegram bot
 
 1. Message [@BotFather](https://t.me/BotFather) -> `/newbot`, follow the
@@ -77,3 +81,10 @@ fresh tag in the real group to confirm long polling resumed after deploy.
 - Pending previews are kept in memory. If the bot restarts between showing a
   preview and someone tapping Set, that one preview goes stale (tapping it
   will say so) -- tag the bot again to regenerate it.
+- One image per tag. When several posters are posted together as an album,
+  Telegram delivers each as its own message -- reply-tag each one separately.
+- Images sent as an uncompressed file must be JPG, PNG, GIF or WebP and under
+  ~3.5 MB. Anything else: send it as a regular photo instead.
+- Reading an image costs noticeably more OpenRouter credit than reading text.
+- `OPENROUTER_MODEL` must be a model that accepts images. The default
+  (`sonnet`, the latest Claude Sonnet) does.
