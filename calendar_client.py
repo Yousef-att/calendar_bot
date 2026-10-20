@@ -6,6 +6,8 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+from recurrence import rrule
+
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
@@ -27,7 +29,7 @@ def build_service(token_path):
 
 
 def insert_event(service, calendar_id, event, timezone):
-    """event is the dict produced by extractor.extract_event (with found=True)."""
+    """event is one of the dicts returned by extractor.extract_events."""
     start_dt = datetime.strptime(f"{event['date']} {event['time']}", "%Y-%m-%d %H:%M")
     start_dt = start_dt.replace(tzinfo=timezone)
     end_dt = start_dt + timedelta(minutes=event["duration_minutes"])
@@ -40,6 +42,8 @@ def insert_event(service, calendar_id, event, timezone):
         "start": {"dateTime": start_dt.isoformat(), "timeZone": tz_name},
         "end": {"dateTime": end_dt.isoformat(), "timeZone": tz_name},
     }
+    if event.get("recurrence"):
+        body["recurrence"] = [rrule(event["recurrence"])]
 
     created = service.events().insert(calendarId=calendar_id, body=body).execute()
     return created.get("htmlLink")

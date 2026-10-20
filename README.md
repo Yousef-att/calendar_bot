@@ -8,6 +8,13 @@ The message can be plain text, or an image such as an event poster or
 invitation -- the bot reads the details printed on it. If the image also has a
 caption, both are read together and the caption wins on any conflict.
 
+Recurring meetings ("every Tuesday", "every other Monday", "daily until
+Dec 15") are created as a real repeating series, and the preview shows a
+`🔁 Repeats:` line so you can check the rule before tapping Set. Without
+wording like "every" or "weekly", a meeting is a one-off. Supported: daily,
+weekly (on chosen weekdays, every N weeks), monthly and yearly, open-ended
+or with an end date / number of times.
+
 ## 1. Create the Telegram bot
 
 1. Message [@BotFather](https://t.me/BotFather) -> `/newbot`, follow the
@@ -74,6 +81,11 @@ Check it came up: `fly logs` should show `Logged in as @yourbotname`. Send a
 fresh tag in the real group to confirm long polling resumed after deploy.
 
 ## Notes / limitations
+
+- Recurring series can't be edited by the bot afterwards (no "skip this
+  week", no changing the end date) -- change those in Google Calendar.
+- "First Monday of each month"-style rules aren't supported; monthly repeats
+  on the same day number as the first occurrence.
 
 - No inline editing of a wrong extraction -- only Set. If the preview is
   wrong, just reply-tag the bot again (or fix the event manually).

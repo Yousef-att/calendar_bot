@@ -9,6 +9,8 @@ import time
 import requests
 from openai import OpenAI
 
+from recurrence import normalize_event
+
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 MODEL_FAMILIES = {"sonnet", "opus", "fable"}
@@ -86,10 +88,31 @@ Respond with ONLY valid JSON, no prose before or after, matching exactly this sc
       "with_whom_en": "who it's with, in English, or null if not mentioned",
       "with_whom_ru": "the same, in Russian, or null if not mentioned",
       "location_en": "where it is, in English, or null if not mentioned",
-      "location_ru": "the same, in Russian, or null if not mentioned"
+      "location_ru": "the same, in Russian, or null if not mentioned",
+      "recurrence": null
     }
   ]
 }
+
+"recurrence" is null for a one-off meeting. For a meeting that repeats it is:
+
+{"freq": "WEEKLY", "interval": 1, "by_day": ["TU"], "until": null, "count": null}
+
+Recurring meetings:
+- Only recurring wording counts: "every Tuesday", "weekly", "daily", "each Monday", \
+"on a regular basis", "every other week", "monthly". A one-off that merely names a \
+weekday ("this Tuesday", "next Tuesday", "on Friday") is NOT recurring.
+- "date" is the FIRST occurrence, and "time"/"duration_minutes" are that entry's slot. \
+If the first occurrence would be today but its time has already passed, use the next one.
+- "freq" is DAILY, WEEKLY, MONTHLY or YEARLY. "interval" is every N of that unit \
+("every other week" -> WEEKLY with interval 2).
+- "by_day" is only for WEEKLY: two-letter codes MO TU WE TH FR SA SU, e.g. \
+["MO","WE","FR"], or ["MO","TU","WE","TH","FR"] for "every weekday". Leave it empty \
+for other frequencies.
+- "until" is the last date it repeats, only if the message states an end \
+("until the end of the year", "through December 15"). "count" is the number of \
+occurrences, only if the message states one. Leave both null when no end is given -- \
+never invent an end date.
 
 Rules:
 - "events" is an empty list if the message does not clearly describe any specific \
@@ -202,4 +225,5 @@ def extract_events(
     for event in events:
         if not event.get("duration_minutes"):
             event["duration_minutes"] = default_duration_minutes
+        normalize_event(event)
     return events

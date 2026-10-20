@@ -20,6 +20,7 @@ from telegram.ext import Application, CallbackQueryHandler, ContextTypes, Messag
 from calendar_client import build_service, insert_event
 from config import load_settings
 from extractor import extract_events
+from recurrence import describe
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -52,6 +53,11 @@ def format_preview(event):
         "📅 *Event preview*",
         f"🗓 Date: {event['date']}",
         f"🕐 Time: {event['time']}  ({event['duration_minutes']} min)",
+    ]
+    if event.get("recurrence"):
+        en, ru = describe(event["recurrence"])
+        lines.append(f"🔁 Repeats: {en} / {ru}")
+    lines += [
         f"📝 Topic: {_bilingual(event, 'topic')}",
         f"👤 With: {_bilingual(event, 'with_whom')}",
         f"📍 Location: {_bilingual(event, 'location')}",
